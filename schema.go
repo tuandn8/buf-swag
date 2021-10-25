@@ -29,8 +29,25 @@ const (
 	// ANY any
 	ANY = "any"
 	// NIL nil
-	NIL = "nil"
+	NIL  = "nil"
+	BYTE = "byte"
 )
+
+var GoProtoTypeMapping map[string]string = map[string]string{
+	"float64": "double",
+	"float32": "float",
+	"int32":   "int32",
+	"int64":   "int64",
+	"uint32":  "uint32",
+	"uint64":  "uint64",
+	"bool":    "bool",
+	"string":  "string",
+}
+
+var GoProtoVariableLengthTypeMapping map[string]string = map[string]string{
+	"int32": "sint32",
+	"int64": "sint64",
+}
 
 // CheckSchemaType checks if typeName is not a name of primitive type.
 func CheckSchemaType(typeName string) error {
@@ -69,7 +86,9 @@ func IsNumericType(typeName string) bool {
 // TransToValidSchemeType indicates type will transfer golang basic type to swagger supported type.
 func TransToValidSchemeType(typeName string) string {
 	switch typeName {
-	case "uint", "int", "uint8", "int8", "uint16", "int16", "byte":
+	case "byte":
+		return BYTE
+	case "uint", "int", "uint8", "int8", "uint16", "int16":
 		return INTEGER
 	case "uint32", "int32", "rune":
 		return INTEGER

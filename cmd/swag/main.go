@@ -24,6 +24,7 @@ const (
 	generatedTimeFlag    = "generatedTime"
 	parseDepthFlag       = "parseDepth"
 	instanceNameFlag     = "instanceName"
+	includeDesc          = "includeDesc"
 )
 
 var initFlags = []cli.Flag{
@@ -93,6 +94,11 @@ var initFlags = []cli.Flag{
 		Value: "",
 		Usage: "This parameter can be used to name different swagger document instances. It is optional.",
 	},
+	&cli.BoolFlag{
+		Name:  includeDesc,
+		Value: true,
+		Usage: "Include model field description",
+	},
 }
 
 func initAction(c *cli.Context) error {
@@ -118,6 +124,7 @@ func initAction(c *cli.Context) error {
 		CodeExampleFilesDir: c.String(codeExampleFilesFlag),
 		ParseDepth:          c.Int(parseDepthFlag),
 		InstanceName:        c.String(instanceNameFlag),
+		IncludeDesc:         c.Bool(includeDesc),
 	})
 }
 

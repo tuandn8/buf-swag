@@ -106,6 +106,9 @@ type Parser struct {
 
 	// debugging output goes here
 	debug Debugger
+
+	// IncludeDesc model field include description
+	IncludeDesc bool
 }
 
 // Debugger is the interface that wraps the basic Printf method.
@@ -739,7 +742,7 @@ func convertFromSpecificToPrimitive(typeName string) (string, error) {
 		name = strings.Split(name, ".")[1]
 	}
 	switch strings.ToUpper(name) {
-	case "TIME", "OBJECTID", "UUID":
+	case "OBJECTID", "UUID":
 		return STRING, nil
 	case "DECIMAL":
 		return NUMBER, nil
@@ -1017,6 +1020,7 @@ type structField struct {
 	enums        []interface{}
 	defaultValue interface{}
 	extensions   map[string]interface{}
+	position     int
 }
 
 func (parser *Parser) parseStructField(file *ast.File, field *ast.Field) (map[string]spec.Schema, []string, error) {
@@ -1088,7 +1092,57 @@ func (parser *Parser) parseStructField(file *ast.File, field *ast.Field) (map[st
 		schema = PrimitiveSchema(structField.schemaType)
 	}
 
-	schema.Description = structField.desc
+	switch fieldType := field.Type.(type) {
+	case *ast.ArrayType:
+		fmt.Printf("element type: %s\n", fieldType.Elt)
+	default:
+		fmt.Printf("field type: %s\n", fieldType)
+	}
+
+	structTag := reflect.StructTag(strings.Replace(field.Tag.Value, "`", "", -1))
+	protobufTag := structTag.Get("protobuf")
+	encodeType := strings.Split(protobufTag, ",")[0]
+
+	protobufType := ""
+	if len(types) >= 1 {
+		if types[0] == ARRAY {
+			if len(types) >= 2 {
+				if types[1] == BYTE {
+					protobufType = "bytes"
+				} else if IsSimplePrimitiveType(types[1]) {
+					protobufType = "repeated " + types[1]
+				}
+			}
+		} else {
+			if IsSimplePrimitiveType(types[0]) {
+				goType := field.Type.(*ast.Ident).Name
+				if strings.Contains(encodeType, "zigzag") {
+					protobufType = GoProtoVariableLengthTypeMapping[goType]
+				} else {
+					protobufType = GoProtoTypeMapping[goType]
+				}
+			} else {
+				switch fieldType := field.Type.(type) {
+				case *ast.StarExpr:
+					protobufType = file.Name.Name + "." + fieldType.X.(*ast.Ident).Name
+				case *ast.MapType:
+					keyType := fieldType.Key.(*ast.Ident).Name
+					valueType := fieldType.Value.(*ast.Ident).Name
+					protobufType = "map<" + keyType + "," + valueType + ">"
+				default:
+					protobufType = file.Name.Name + "." + field.Names[0].Name
+				}
+			}
+		}
+	}
+
+	fieldDesc := fmt.Sprintf("Proto content `%s %s %s = %d;`", protobufType, structField.formatType, fieldName, structField.position)
+	fmt.Printf("field desc: %s\n", fieldDesc)
+	if parser.IncludeDesc {
+		schema.Description = fieldDesc + structField.desc
+	} else {
+		schema.Description = fieldDesc
+	}
 	schema.ReadOnly = structField.readOnly
 	schema.Default = structField.defaultValue
 	schema.Example = structField.exampleValue
@@ -1140,7 +1194,7 @@ func getFieldType(field ast.Expr) (string, error) {
 	}
 }
 
-func (parser *Parser) getFieldName(field *ast.Field) (name string, schema *spec.Schema, err error) {
+func (parser *Parser) getFieldNameDeprecated(field *ast.Field) (name string, schema *spec.Schema, err error) {
 	// Skip non-exported fields.
 	if !ast.IsExported(field.Names[0].Name) {
 		return "", nil, nil
@@ -1184,7 +1238,7 @@ func (parser *Parser) getFieldName(field *ast.Field) (name string, schema *spec.
 	return name, schema, err
 }
 
-func (parser *Parser) parseFieldTag(field *ast.Field, types []string) (*structField, error) {
+func (parser *Parser) parseFieldTagDeprecated(field *ast.Field, types []string) (*structField, error) {
 	structField := &structField{
 		//    name:       field.Names[0].Name,
 		schemaType: types[0],
@@ -1339,6 +1393,133 @@ func (parser *Parser) parseFieldTag(field *ast.Field, types []string) (*structFi
 				// if exampleValue is not defined by the user,
 				// we will force an example with a correct value
 				// (eg: int->"0", bool:"false")
+				structField.exampleValue = defaultValue
+			}
+		}
+	}
+
+	return structField, nil
+}
+
+func (parser *Parser) getFieldName(field *ast.Field) (name string, schema *spec.Schema, err error) {
+	if !ast.IsExported(field.Names[0].Name) {
+		return "", nil, nil
+	}
+
+	if field.Tag != nil {
+		structTag := reflect.StructTag(strings.Replace(field.Tag.Value, "`", "", -1))
+		ignoreTag := structTag.Get("swaggerignore")
+		if strings.EqualFold(ignoreTag, "true") {
+			return "", nil, nil
+		}
+
+		// `protobuf:"varint,3,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id" db:"campaign_id"`
+		tagContent := structTag.Get("protobuf")
+		name = ""
+		tagArr := strings.Split(tagContent, ",")
+		for _, tag := range tagArr {
+			if strings.HasPrefix(tag, "name=") {
+				name = strings.Split(tag, "=")[1]
+				break
+			}
+		}
+	}
+
+	if name == "" {
+		switch parser.PropNamingStrategy {
+		case SnakeCase:
+			name = toSnakeCase(name)
+		default:
+			name = toLowerCamelCase(name)
+		}
+	}
+
+	return name, schema, err
+}
+
+func (parser *Parser) parseFieldTag(field *ast.Field, types []string) (*structField, error) {
+	fmt.Println("types: ", types)
+	fmt.Println("field: ", field.Names, field.Type.Pos())
+	structField := &structField{
+		schemaType: types[0],
+	}
+
+	if len(types) > 1 && (types[0] == ARRAY || types[0] == OBJECT) {
+		structField.arrayType = types[1]
+	}
+
+	if field.Doc != nil {
+		structField.desc = strings.TrimSpace(field.Doc.Text())
+	}
+	if structField.desc == "" && field.Comment != nil {
+		structField.desc = strings.TrimSpace(field.Comment.Text())
+	}
+
+	if field.Tag == nil {
+		return structField, nil
+	}
+
+	// `protobuf:"varint,3,opt,name=campaign_id,json=campaignId,proto3" json:"campaign_id" db:"campaign_id"`
+	structTag := reflect.StructTag(strings.Replace(field.Tag.Value, "`", "", -1))
+	protobufTag := structTag.Get("protobuf")
+	protoTags := strings.Split(protobufTag, ",")
+	position, _ := strconv.Atoi(strings.TrimSpace(protoTags[1]))
+	required := strings.TrimSpace(protoTags[2])
+
+	if required == "opt" {
+		structField.isRequired = false
+	} else {
+		structField.isRequired = true
+	}
+
+	structField.position = position
+
+	if IsNumericType(structField.schemaType) || IsNumericType(structField.arrayType) {
+		maximum, err := getFloatTag(structTag, "maximum")
+		if err != nil {
+			return nil, err
+		}
+		structField.maximum = maximum
+
+		minimum, err := getFloatTag(structTag, "minimum")
+		if err != nil {
+			return nil, err
+		}
+		structField.minimum = minimum
+
+		multipleOf, err := getFloatTag(structTag, "multipleOf")
+		if err != nil {
+			return nil, err
+		}
+		structField.multipleOf = multipleOf
+	}
+
+	if structField.schemaType == STRING || structField.arrayType == STRING {
+		maxLength, err := getIntTag(structTag, "maxLength")
+		if err != nil {
+			return nil, err
+		}
+		structField.maxLength = maxLength
+
+		minLength, err := getIntTag(structTag, "minLength")
+		if err != nil {
+			return nil, err
+		}
+		structField.minLength = minLength
+	}
+
+	if strings.Contains(protobufTag, ",string") {
+		defaultValues := map[string]string{
+			STRING:  "",
+			INTEGER: "0",
+			BOOLEAN: "false",
+			NUMBER:  "0",
+		}
+		defaultValue, ok := defaultValues[structField.schemaType]
+		if ok {
+			structField.schemaType = STRING
+
+			if structField.exampleValue == nil {
 				structField.exampleValue = defaultValue
 			}
 		}
@@ -1686,4 +1867,13 @@ func (parser *Parser) addTestType(typename string) {
 		Name:    typename,
 		Schema:  PrimitiveSchema(OBJECT),
 	}
+}
+
+func toProtoTypes(field *ast.Field) (string, error) {
+	switch fieldType := field.Type.(type) {
+	case *ast.Ident:
+		fmt.Printf("%s", fieldType.Name)
+	}
+
+	return "", nil
 }

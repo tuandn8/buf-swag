@@ -47,6 +47,7 @@ var mimeTypeAliases = map[string]string{
 	"png":                   "image/png",
 	"jpeg":                  "image/jpeg",
 	"gif":                   "image/gif",
+	"protobuf":              "application/protobuf",
 }
 
 var mimeTypePattern = regexp.MustCompile("^[^/]+/[^/]+$")

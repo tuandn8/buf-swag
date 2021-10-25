@@ -12,7 +12,7 @@ GOVET:=$(GOCMD) vet
 GOPATH:=$(shell $(GOCMD) env GOPATH)
 u := $(if $(update),-u)
 
-BINARY_NAME:=swag
+BINARY_NAME:=buf-swag
 PACKAGES:=$(shell $(GOLIST) github.com/swaggo/swag github.com/swaggo/swag/cmd/swag github.com/swaggo/swag/gen)
 GOFILES:=$(shell find . -name "*.go" -type f)
 
